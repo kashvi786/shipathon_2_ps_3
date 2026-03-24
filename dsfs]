@@ -1,0 +1,4 @@
+# Basic test
+curl -X POST http://localhost:5000/agent/message \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Fetch last week\'s sales data, summarize by region, chart, and email it."}'

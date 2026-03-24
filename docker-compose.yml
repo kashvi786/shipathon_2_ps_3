@@ -1,0 +1,22 @@
+services:
+  a2a-orchestration-agent:
+    build: .
+    container_name: a2a-orchestration-agent
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GEMINI_MODEL_FALLBACKS=${GEMINI_MODEL_FALLBACKS:-gemini-1.5-flash-8b,gemini-2.0-flash}
+      - GEMINI_MAX_TOKENS=${GEMINI_MAX_TOKENS:-256}
+      - AGENT_MAX_ITERATIONS=${AGENT_MAX_ITERATIONS:-8}
+      - SIMULATE_TRANSIENT_FAILURES=${SIMULATE_TRANSIENT_FAILURES:-false}
+      # Add your custom environment variables here
+    stdin_open: true
+    ports:
+      - "5001:5000"
+    tty: true
+    networks:
+      - agents-net
+
+networks:
+  agents-net:
+    driver: bridge

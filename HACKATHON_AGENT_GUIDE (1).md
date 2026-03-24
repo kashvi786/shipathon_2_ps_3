@@ -41,7 +41,7 @@ Complete guide for building and deploying agents using the Nasiko platform and t
 The Agent-to-Agent (A2A) protocol is a JSON-RPC 2.0 based system that allows agents to communicate with each other and with the Nasiko platform. Your agent will:
 
 1. Receive messages via HTTP POST requests
-2. Process them using your custom logic 
+2. Process them using your custom logic
 3. Return structured responses in A2A format
 
 ---
@@ -63,11 +63,13 @@ cd my-awesome-agent
 Follow the [customization checklist](CUSTOMIZE.md) to replace all placeholders:
 
 #### Basic Information
+
 - Replace `{{AGENT_NAME}}` with your agent name (e.g., "my-awesome-agent")
 - Replace `{{AGENT_DESCRIPTION}}` with your agent description
 - Replace `{{AGENT_CONTAINER_NAME}}` with your container name
 
-#### Skills & Capabilities  
+#### Skills & Capabilities
+
 - Replace `{{AGENT_SKILL_ID}}` with unique skill ID (e.g., "data_analysis")
 - Replace `{{AGENT_SKILL_NAME}}` with human-readable name (e.g., "Data Analysis")
 - Replace `{{AGENT_SKILL_DESCRIPTION}}` with what your agent does
@@ -75,14 +77,17 @@ Follow the [customization checklist](CUSTOMIZE.md) to replace all placeholders:
 - Replace `{{AGENT_EXAMPLES}}` with usage examples array
 
 #### Toolset Configuration
+
 - Replace `{{TOOLSET_CLASS}}` with your toolset class name (e.g., "DataAnalysisToolset")
 - Replace `{{TOOLSET_MODULE}}` with module name (e.g., "data_toolset")
 - Rename `src/agent_toolset.py` to your module name
 
 #### System Prompt
+
 - Replace `{{SYSTEM_PROMPT}}` with your agent's system prompt
 
 **Quick Replace Example:**
+
 ```bash
 # Use find/replace in your editor or sed commands
 find . -name "*.py" -o -name "*.toml" -o -name "*.yml" \
@@ -113,23 +118,23 @@ class DataAnalysisToolset:
         self.session = None
 
     async def analyze_data(
-        self, 
-        data: str, 
+        self,
+        data: str,
         analysis_type: str = "summary"
     ) -> str:
         """Analyze provided data and return insights
-        
+
         Args:
             data: The data to analyze (CSV, JSON, or plain text)
             analysis_type: Type of analysis to perform (summary, trends, statistics)
-            
+
         Returns:
             str: Analysis results and insights
         """
         try:
             if not data.strip():
                 return "Error: No data provided for analysis"
-            
+
             # Implement your analysis logic here
             # This is a mock implementation
             if analysis_type == "summary":
@@ -138,23 +143,23 @@ class DataAnalysisToolset:
                 result = f"Trend Analysis:\n- Pattern detected in {data[:100]}..."
             else:
                 result = f"Analysis completed for: {analysis_type}"
-            
+
             return result
-            
+
         except Exception as e:
             return f"Analysis failed: {str(e)}"
 
     async def process_dataset(
-        self, 
-        dataset_url: str, 
+        self,
+        dataset_url: str,
         operation: str = "validate"
     ) -> str:
         """Process dataset from URL
-        
+
         Args:
             dataset_url: URL to the dataset
             operation: Operation to perform (validate, clean, transform)
-            
+
         Returns:
             str: Processing results
         """
@@ -162,10 +167,10 @@ class DataAnalysisToolset:
             # Implement dataset processing logic
             # This is a mock implementation
             await asyncio.sleep(0.1)  # Simulate processing time
-            
+
             result = f"Dataset processed from {dataset_url}\\nOperation: {operation}\\nStatus: Complete"
             return result
-            
+
         except Exception as e:
             return f"Dataset processing failed: {str(e)}"
 
@@ -178,9 +183,10 @@ class DataAnalysisToolset:
 ```
 
 **Tool Guidelines:**
+
 - Use clear, descriptive function names and docstrings
 - The OpenAI model uses docstrings to understand when to call your tools
-- Handle errors gracefully with try/catch blocks  
+- Handle errors gracefully with try/catch blocks
 - Return strings (the A2A protocol expects text responses)
 - Keep tools focused on single responsibilities
 - Use type hints and Pydantic models for validation
@@ -190,20 +196,22 @@ class DataAnalysisToolset:
 If your agent requires additional dependencies, update:
 
 **`pyproject.toml`:**
+
 ```toml
 dependencies = [
     "a2a-sdk>=0.3.0",
     "click>=8.1.8",
-    "openai>=1.57.0", 
+    "openai>=1.57.0",
     "pydantic>=2.11.4",
     # Add your custom dependencies
     "pandas>=2.0.0",
-    "numpy>=1.24.0", 
+    "numpy>=1.24.0",
     "scikit-learn>=1.3.0",
 ]
 ```
 
 **`Dockerfile`:**
+
 ```dockerfile
 RUN pip install --no-cache-dir \
     "a2a-sdk[http-server]>=0.3.0" \
@@ -224,17 +232,20 @@ RUN pip install --no-cache-dir \
 Always test your agent using Docker to ensure consistency with the deployment environment:
 
 1. **Build the Docker container:**
+
    ```bash
    docker build -t my-awesome-agent .
    ```
 
 2. **Run the agent:**
+
    ```bash
    export OPENAI_API_KEY=your_openai_api_key_here
    docker run -p 5000:5000 -e OPENAI_API_KEY=$OPENAI_API_KEY my-awesome-agent
    ```
 
 3. **Test with curl:**
+
    ```bash
    curl -X POST http://localhost:5000/ \
    -H "Content-Type: application/json" \
@@ -256,49 +267,49 @@ Always test your agent using Docker to ensure consistency with the deployment en
         }
       }
     }'
-    ```
+   ```
 
 4. **Expected response:**
    ```json
    {
-      "id": "fdaa5774acb044f38637f1d174f91ae1",
-      "jsonrpc": "2.0",
-      "result": {
-        "artifacts": [
-            {
-                "artifactId": "e13346a0-bb62-493e-8f48-483d7c995a83",
-                "parts": [
-                    {
-                        "kind": "text",
-                        "text": "Hello, I am a helpful assistant. How can I help you?"
-                    }
-                ]
-            }
-        ],
-        "contextId": "cd21cfc6-bc00-4fee-9b4a-5a7b6d41eb59",
-        "history": [
-            {
-                "contextId": "cd21cfc6-bc00-4fee-9b4a-5a7b6d41eb59",
-                "kind": "message",
-                "messageId": "dc86b828-2f6b-48d7-b8a9-ba5bf714eecf",
-                "parts": [
-                    {
-                        "kind": "text",
-                        "text": "can you tell me for Bengaluru India?"
-                    }
-                ],
-                "role": "user",
-                "taskId": "ebfca890-8b3e-433e-9b98-da9b0515158f"
-            }
-        ],
-        "id": "ebfca890-8b3e-433e-9b98-da9b0515158f",
-        "kind": "task",
-        "status": {
-            "state": "completed",
-            "timestamp": "2026-03-18T12:18:48.238634+00:00"
-        }
-      }
-    }
+     "id": "fdaa5774acb044f38637f1d174f91ae1",
+     "jsonrpc": "2.0",
+     "result": {
+       "artifacts": [
+         {
+           "artifactId": "e13346a0-bb62-493e-8f48-483d7c995a83",
+           "parts": [
+             {
+               "kind": "text",
+               "text": "Hello, I am a helpful assistant. How can I help you?"
+             }
+           ]
+         }
+       ],
+       "contextId": "cd21cfc6-bc00-4fee-9b4a-5a7b6d41eb59",
+       "history": [
+         {
+           "contextId": "cd21cfc6-bc00-4fee-9b4a-5a7b6d41eb59",
+           "kind": "message",
+           "messageId": "dc86b828-2f6b-48d7-b8a9-ba5bf714eecf",
+           "parts": [
+             {
+               "kind": "text",
+               "text": "can you tell me for Bengaluru India?"
+             }
+           ],
+           "role": "user",
+           "taskId": "ebfca890-8b3e-433e-9b98-da9b0515158f"
+         }
+       ],
+       "id": "ebfca890-8b3e-433e-9b98-da9b0515158f",
+       "kind": "task",
+       "status": {
+         "state": "completed",
+         "timestamp": "2026-03-18T12:18:48.238634+00:00"
+       }
+     }
+   }
    ```
 
 ### Testing with Docker Compose
@@ -331,6 +342,7 @@ This is the recommended method for hackathon submissions.
 #### Step 2: Prepare Your Code
 
 1. Copy your customized agent files:
+
    ```bash
    cp -r /path/to/your/customized/agent/* .
    ```
@@ -390,12 +402,13 @@ For quick prototyping without GitHub:
 #### Step 1: Prepare Your Agent
 
 Ensure your agent structure is correct:
+
 ```
 my-awesome-agent/
 ├── src/
 │   ├── __init__.py
 │   ├── __main__.py          (Required)
-│   ├── openai_agent.py  
+│   ├── openai_agent.py
 │   ├── openai_agent_executor.py
 │   └── your_toolset.py
 ├── docker-compose.yml       (Required)
@@ -406,11 +419,13 @@ my-awesome-agent/
 ```
 
 **Required files for deployment:**
+
 - `Dockerfile`
 - `docker-compose.yml`
 - `src/__main__.py` OR `main.py`
 
 **Optional files:**
+
 - `AgentCard.json` (auto-generated if missing)
 
 #### Step 2: Create ZIP Package
@@ -476,16 +491,21 @@ The A2A template automatically generates proper agent cards (`AgentCard.json`) i
 ### Build Issues
 
 **Problem**: Docker build fails with dependency errors
+
 ```
 ERROR: Could not find a version that satisfies the requirement a2a-sdk>=0.3.0
 ```
+
 **Solution**: Ensure dependencies are correctly specified in both `pyproject.toml` and `Dockerfile`
 
 **Problem**: Import errors during runtime
+
 ```
 ModuleNotFoundError: No module named 'your_toolset'
 ```
-**Solution**: 
+
+**Solution**:
+
 - Check that you renamed the toolset file correctly
 - Verify imports in `openai_agent.py` match your module name
 - Ensure the `get_tools()` method returns correct tool mapping
@@ -493,19 +513,25 @@ ModuleNotFoundError: No module named 'your_toolset'
 ### Runtime Issues
 
 **Problem**: Agent doesn't call tools
+
 ```
 Agent responds with text but never uses defined tools
 ```
+
 **Solution**:
+
 - Improve tool descriptions in docstrings - be very specific about when to use each tool
 - Test that tools are correctly registered in `get_tools()`
 - Verify the OpenAI model can understand your tool descriptions
 
 **Problem**: Environment variable errors
+
 ```
 ValueError: OPENAI_API_KEY environment variable not set
 ```
-**Solution**: 
+
+**Solution**:
+
 - Set `OPENAI_API_KEY` in your environment
 - For Docker: `docker run -e OPENAI_API_KEY=$OPENAI_API_KEY ...`
 - For deployment: ensure environment variables are configured in dashboard
@@ -513,19 +539,25 @@ ValueError: OPENAI_API_KEY environment variable not set
 ### Deployment Issues
 
 **Problem**: Validation fails
+
 ```
 Validation failed: docker-compose.yml not found
 ```
+
 **Solution**: Ensure all required files are present:
+
 - `Dockerfile` in root directory
-- `docker-compose.yml` in root directory  
+- `docker-compose.yml` in root directory
 - `src/` directory with Python files
 
 **Problem**: Agent crashes after deployment
+
 ```
 Agent status: Crashed, Exit code: 1
 ```
+
 **Solution**:
+
 - Check deployment logs for specific error
 - Test Docker container locally first
 - Verify all environment variables are set
@@ -573,7 +605,7 @@ The template comes with a complete weather agent example that demonstrates:
 
 - **Multiple Tools**: Current weather and forecast functions
 - **Mock Data**: Sample data for testing without API keys
-- **Error Handling**: Proper validation and error responses  
+- **Error Handling**: Proper validation and error responses
 - **Documentation**: Complete setup and usage instructions
 
 ### Template Features Demonstrated
@@ -591,12 +623,14 @@ Use the weather agent as a reference for your own development!
 ## Support and Resources
 
 ### Getting Help
+
 - Check the troubleshooting section above
 - Review error logs in the deployment dashboard
 - Test locally first to isolate issues
 - Refer to the working weather agent example
 
 ### Tips for Success
+
 1. Start with the template - don't build from scratch
 2. Follow the customization checklist step by step
 3. Test each tool individually before integration

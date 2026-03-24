@@ -2,6 +2,7 @@ import json
 import logging
 import inspect
 import os
+import re
 
 from typing import Any
 
@@ -35,21 +36,239 @@ class OpenAIAgentExecutor(AgentExecutor):
     ):
         self._card = card
         self.tools = tools
-        self.client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-        )
+        self.client = None
+        if api_key:
+            self.client = AsyncOpenAI(
+                api_key=api_key,
+                base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+            )
         self.model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
         self.max_tokens = int(os.getenv('GEMINI_MAX_TOKENS', '256'))
         self.max_iterations = int(os.getenv('AGENT_MAX_ITERATIONS', '8'))
         fallback_models = os.getenv(
             'GEMINI_MODEL_FALLBACKS',
-            'gemini-1.5-flash-8b,gemini-2.0-flash',
+            'gemini-2.5-flash',
         )
         self.fallback_models = [
             model.strip() for model in fallback_models.split(',') if model.strip()
         ]
         self.system_prompt = system_prompt
+
+    def _parse_tool_result(self, raw_result: Any) -> dict[str, Any]:
+        if isinstance(raw_result, dict):
+            return raw_result
+        if isinstance(raw_result, str):
+            try:
+                parsed = json.loads(raw_result)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                return {'status': 'error', 'message': f'Non-JSON tool output: {raw_result}'}
+        if hasattr(raw_result, 'model_dump'):
+            return raw_result.model_dump()
+        return {'status': 'error', 'message': f'Unsupported tool output type: {type(raw_result).__name__}'}
+
+    def _build_execution_log(self, message_text: str) -> dict[str, Any]:
+        return {
+            'workflow_domain': 'adaptive_data_pipeline_orchestration',
+            'input_instruction': message_text,
+            'plan': [],
+            'steps': [],
+            'overall_status': 'in_progress',
+        }
+
+    def _extract_json_block(self, content: str) -> str:
+        if not content:
+            return '{}'
+        fenced_match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if fenced_match:
+            return fenced_match.group(1)
+
+        object_match = re.search(r'(\{.*\})', content, re.DOTALL)
+        if object_match:
+            return object_match.group(1)
+        return '{}'
+
+    async def _generate_plan(self, message_text: str) -> list[dict[str, Any]]:
+        planner_prompt = (
+            'You are a workflow planner for a data pipeline agent. '
+            'Create an ordered execution plan using ONLY the available tools. '
+            'You may choose a subset of tools based on the user request. '
+            f'Available tools: {", ".join(self.tools.keys())}. '
+            'Return JSON only in this format: '
+            '{"plan": [{"step": 1, "tool": "data_fetcher", "reason": "..."}]}'
+        )
+
+        planning_messages = [
+            {'role': 'system', 'content': planner_prompt},
+            {'role': 'user', 'content': message_text},
+        ]
+
+        try:
+            planning_response = await self._chat_completion_with_fallback(
+                messages=planning_messages,
+                openai_tools=[],
+            )
+            content = planning_response.choices[0].message.content or '{}'
+            parsed = json.loads(self._extract_json_block(content))
+            plan = parsed.get('plan', []) if isinstance(parsed, dict) else []
+            if not isinstance(plan, list):
+                return []
+
+            normalized_plan: list[dict[str, Any]] = []
+            for index, step in enumerate(plan, start=1):
+                if not isinstance(step, dict):
+                    continue
+                tool_name = step.get('tool')
+                if tool_name not in self.tools:
+                    continue
+                normalized_plan.append(
+                    {
+                        'step': step.get('step', index),
+                        'tool': tool_name,
+                        'reason': step.get('reason', ''),
+                    }
+                )
+            return normalized_plan
+        except Exception as error:
+            logger.warning(f'Planning phase failed, continuing without explicit plan: {error}')
+            return []
+
+    def _validate_step_result(self, step_name: str, payload: dict[str, Any]) -> tuple[bool, str]:
+        if payload.get('status') != 'success':
+            return False, payload.get('message', 'Tool returned non-success status')
+
+        required_fields = {
+            'data_fetcher': ['data_id'],
+            'data_transformer': ['transformed_data_id'],
+            'chart_generator': ['chart_id'],
+            'report_composer': ['report_id'],
+            'email_dispatcher': ['message'],
+        }
+        missing = [field for field in required_fields.get(step_name, []) if field not in payload]
+        if missing:
+            return False, f'Missing expected field(s): {", ".join(missing)}'
+        return True, ''
+
+    async def _call_tool_step(
+        self,
+        step_name: str,
+        args: dict[str, Any],
+        max_retries: int = 2,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if step_name not in self.tools:
+            failure = {
+                'status': 'failed',
+                'step': step_name,
+                'attempts': [],
+                'final_error': f'Tool not registered: {step_name}',
+            }
+            return {}, failure
+
+        tool_instance = self.tools[step_name]
+        if not hasattr(tool_instance, step_name):
+            failure = {
+                'status': 'failed',
+                'step': step_name,
+                'attempts': [],
+                'final_error': f'Method not found on tool instance: {step_name}',
+            }
+            return {}, failure
+
+        method = getattr(tool_instance, step_name)
+        attempts = []
+
+        for retry_count in range(max_retries + 1):
+            call_args = {**args, 'retry_count': retry_count}
+
+            if step_name == 'data_fetcher' and retry_count > 0:
+                call_args['source'] = call_args.get('source', 'sales_api')
+            if step_name == 'data_transformer' and retry_count > 0:
+                call_args['region'] = call_args.get('region', 'all') or 'all'
+            if step_name == 'chart_generator' and retry_count > 0:
+                call_args['chart_type'] = call_args.get('chart_type', 'bar') or 'bar'
+
+            try:
+                result = method(**call_args)
+                if inspect.iscoroutine(result):
+                    result = await result
+
+                payload = self._parse_tool_result(result)
+                is_valid, error_message = self._validate_step_result(step_name, payload)
+
+                attempts.append(
+                    {
+                        'retry_count': retry_count,
+                        'input': call_args,
+                        'result': payload,
+                        'status': 'success' if is_valid else 'failed',
+                        'error': '' if is_valid else error_message,
+                    }
+                )
+
+                if is_valid:
+                    return payload, {
+                        'status': 'success',
+                        'step': step_name,
+                        'attempts': attempts,
+                    }
+            except Exception as error:
+                attempts.append(
+                    {
+                        'retry_count': retry_count,
+                        'input': call_args,
+                        'result': {},
+                        'status': 'failed',
+                        'error': str(error),
+                    }
+                )
+
+        final_error = attempts[-1]['error'] if attempts else 'Unknown failure'
+        return {}, {
+            'status': 'failed',
+            'step': step_name,
+            'attempts': attempts,
+            'final_error': final_error,
+        }
+
+    async def _execute_llm_tool_call(
+        self,
+        function_name: str,
+        function_args: dict[str, Any],
+        execution_log: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        if function_name not in self.tools:
+            failure = {
+                'status': 'failed',
+                'step': function_name,
+                'attempts': [
+                    {
+                        'retry_count': 0,
+                        'input': function_args,
+                        'result': {},
+                        'status': 'failed',
+                        'error': f'Function {function_name} not found',
+                    }
+                ],
+                'final_error': f'Function {function_name} not found',
+            }
+            execution_log['steps'].append(failure)
+            execution_log['overall_status'] = 'escalated'
+            execution_log['escalation_reason'] = failure['final_error']
+            return {'status': 'error', 'message': failure['final_error']}, True
+
+        payload, step_log = await self._call_tool_step(function_name, function_args)
+        execution_log['steps'].append(step_log)
+        if step_log['status'] != 'success':
+            execution_log['overall_status'] = 'escalated'
+            execution_log['escalation_reason'] = step_log.get(
+                'final_error', f'{function_name} failed after retries'
+            )
+            return {
+                'status': 'error',
+                'message': execution_log['escalation_reason'],
+            }, True
+        return payload, False
 
     async def _process_request(
         self,
@@ -57,10 +276,36 @@ class OpenAIAgentExecutor(AgentExecutor):
         context: RequestContext,
         task_updater: TaskUpdater,
     ) -> None:
+        execution_log = self._build_execution_log(message_text)
+
+        if not self.client:
+            await task_updater.add_artifact(
+                [
+                    TextPart(
+                        text='GEMINI_API_KEY is required.'
+                    )
+                ]
+            )
+            await task_updater.complete()
+            return
+
         messages = [
             {'role': 'system', 'content': self.system_prompt},
             {'role': 'user', 'content': message_text},
         ]
+
+        plan = await self._generate_plan(message_text)
+        execution_log['plan'] = plan
+        if plan:
+            messages.append(
+                {
+                    'role': 'system',
+                    'content': (
+                        'Execution plan generated before running tools. '
+                        f'Follow this ordered plan while executing: {json.dumps(plan)}'
+                    ),
+                }
+            )
 
         # Convert tools to OpenAI format
         openai_tools = []
@@ -105,35 +350,12 @@ class OpenAIAgentExecutor(AgentExecutor):
                             f'Calling function: {function_name} with args: {function_args}'
                         )
 
-                        # Execute the function
-                        if function_name in self.tools:
-                            tool_instance = self.tools[function_name]
-                            # Get the method from the instance
-                            if hasattr(tool_instance, function_name):
-                                method = getattr(tool_instance, function_name)
-                                result = method(**function_args)
-                                # Check if the result is a coroutine and await it
-                                if inspect.iscoroutine(result):
-                                    result = await result
-                            else:
-                                result = {
-                                    'error': f'Method {function_name} not found on tool instance'
-                                }
-                        else:
-                            result = {
-                                'error': f'Function {function_name} not found'
-                            }
-
-                        # Serialize result properly - handle Pydantic models
-                        if hasattr(result, 'model_dump'):
-                            # It's a Pydantic model, use model_dump() to convert to dict
-                            result_json = json.dumps(result.model_dump())
-                        elif isinstance(result, dict):
-                            # It's a regular dict
-                            result_json = json.dumps(result)
-                        else:
-                            # Convert to string as fallback
-                            result_json = str(result)
+                        result, escalated = await self._execute_llm_tool_call(
+                            function_name=function_name,
+                            function_args=function_args,
+                            execution_log=execution_log,
+                        )
+                        result_json = json.dumps(result)
 
                         # Add tool result to messages
                         messages.append(
@@ -143,6 +365,12 @@ class OpenAIAgentExecutor(AgentExecutor):
                                 'content': result_json,
                             }
                         )
+
+                        if escalated:
+                            final_log = json.dumps(execution_log, indent=2)
+                            await task_updater.add_artifact([TextPart(text=final_log)])
+                            await task_updater.complete()
+                            return
 
                     # Send update to show we're processing
                     await task_updater.update_status(
@@ -156,7 +384,17 @@ class OpenAIAgentExecutor(AgentExecutor):
                     continue
                 # No more tool calls, this is the final response
                 if message.content:
-                    parts = [TextPart(text=message.content)]
+                    if execution_log['steps'] and execution_log['overall_status'] == 'in_progress':
+                        execution_log['overall_status'] = 'success'
+
+                    final_response = message.content
+                    if execution_log['steps']:
+                        final_response = (
+                            f'{message.content}\n\nExecution Log:\n'
+                            f'{json.dumps(execution_log, indent=2)}'
+                        )
+
+                    parts = [TextPart(text=final_response)]
                     logger.debug(f'Yielding final response: {parts}')
                     await task_updater.add_artifact(parts)
                     await task_updater.complete()
@@ -164,9 +402,15 @@ class OpenAIAgentExecutor(AgentExecutor):
 
             except Exception as e:
                 logger.error(f'Error in OpenAI API call: {e}')
+                if execution_log['overall_status'] == 'in_progress':
+                    execution_log['overall_status'] = 'failed'
+                    execution_log['failure_reason'] = str(e)
                 error_parts = [
                     TextPart(
-                        text=f'Sorry, an error occurred while processing the request: {e!s}'
+                        text=(
+                            'Sorry, an error occurred while processing the request: '
+                            f'{e!s}\n\nExecution Log:\n{json.dumps(execution_log, indent=2)}'
+                        )
                     )
                 ]
                 await task_updater.add_artifact(error_parts)

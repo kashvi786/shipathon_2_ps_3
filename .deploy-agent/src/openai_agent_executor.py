@@ -105,8 +105,7 @@ class OpenAIAgentExecutor(AgentExecutor):
     async def _generate_plan(self, message_text: str) -> list[dict[str, Any]]:
         planner_prompt = (
             'You are a workflow planner for a data pipeline agent. '
-            'Create a concrete, ordered execution plan BEFORE any tool execution. '
-            'Use ONLY the available tools and respect dependencies. '
+            'Create an ordered execution plan using ONLY the available tools. '
             'You may choose a subset of tools based on the user request. '
             f'Available tools: {", ".join(self.tools.keys())}. '
             'Return JSON only in this format: '
@@ -147,58 +146,6 @@ class OpenAIAgentExecutor(AgentExecutor):
         except Exception as error:
             logger.warning(f'Planning phase failed, continuing without explicit plan: {error}')
             return []
-
-    def _build_fallback_plan(self, message_text: str) -> list[dict[str, Any]]:
-        text = (message_text or '').lower()
-        plan: list[dict[str, Any]] = []
-
-        wants_fetch = any(keyword in text for keyword in ['fetch', 'data', 'csv', 'sales'])
-        wants_transform = any(
-            keyword in text for keyword in ['summar', 'transform', 'region', 'clean']
-        )
-        wants_chart = any(keyword in text for keyword in ['chart', 'graph', 'plot', 'visual'])
-        wants_report = any(keyword in text for keyword in ['report', 'compose', 'document'])
-        wants_email = any(keyword in text for keyword in ['email', 'send', 'dispatch'])
-        wants_read_chart = any(
-            keyword in text for keyword in ['get_chart', 'chart_id', 'chart preview', 'chart file']
-        )
-        wants_read_report = any(
-            keyword in text
-            for keyword in ['get_report', 'report_id', 'report markdown', 'report file']
-        )
-
-        if wants_fetch or wants_transform or wants_chart or wants_report or wants_email:
-            plan.append({'tool': 'data_fetcher', 'reason': 'Fetch raw sales data first'})
-        if wants_transform or wants_chart or wants_report or wants_email:
-            plan.append({'tool': 'data_transformer', 'reason': 'Transform data for downstream steps'})
-        if wants_chart or wants_report or wants_email:
-            plan.append({'tool': 'chart_generator', 'reason': 'Generate chart from transformed data'})
-        if wants_report or wants_email:
-            plan.append({'tool': 'report_composer', 'reason': 'Compose report artifact'})
-        if wants_email:
-            plan.append({'tool': 'email_dispatcher', 'reason': 'Dispatch report to recipient'})
-
-        if wants_read_chart:
-            plan.append({'tool': 'get_chart', 'reason': 'Return chart preview/file metadata'})
-        if wants_read_report:
-            plan.append({'tool': 'get_report', 'reason': 'Return report markdown/file metadata'})
-
-        if not plan:
-            plan.append({'tool': 'data_fetcher', 'reason': 'Default entry step for pipeline workflows'})
-
-        normalized_plan: list[dict[str, Any]] = []
-        for index, step in enumerate(plan, start=1):
-            tool_name = step.get('tool')
-            if tool_name not in self.tools:
-                continue
-            normalized_plan.append(
-                {
-                    'step': index,
-                    'tool': tool_name,
-                    'reason': step.get('reason', ''),
-                }
-            )
-        return normalized_plan
 
     def _validate_step_result(self, step_name: str, payload: dict[str, Any]) -> tuple[bool, str]:
         if payload.get('status') != 'success':
@@ -450,11 +397,6 @@ class OpenAIAgentExecutor(AgentExecutor):
         ]
 
         plan = await self._generate_plan(message_text)
-        if not plan:
-            plan = self._build_fallback_plan(message_text)
-            execution_log['plan_source'] = 'deterministic_fallback'
-        else:
-            execution_log['plan_source'] = 'llm_generated'
         execution_log['plan'] = plan
         if plan:
             messages.append(

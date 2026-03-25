@@ -1,0 +1,30 @@
+# Sales Report
+
+Generated at: 2026-03-25T11:09:41.341803Z
+
+## Summary
+Sales summary by region
+
+## Chart Type
+bar
+
+## Chart Preview
+
+```
+BAR CHART (ASCII)
+        East | █████████████████████████████ 687780.00
+       North | ██████████████████████████████ 688610.00
+       South | █████████████████████████████ 681670.00
+        West | █████████████████████████████ 667640.00
+```
+
+## Raw Series
+
+```json
+{
+  "North": 688610.0,
+  "South": 681670.0,
+  "East": 687780.0,
+  "West": 667640.0
+}
+```
